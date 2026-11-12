@@ -4,6 +4,7 @@ import json
 import base64
 import urllib.parse
 import re
+import time
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
@@ -197,6 +198,48 @@ def get_status():
 class ConfigModel(BaseModel):
     mirror: Optional[str] = None
     cookies: Optional[str] = None
+
+class LoginModel(BaseModel):
+    email: str
+    password: str
+
+@app.post("/api/login")
+def rezka_login(payload: LoginModel):
+    """Authenticate with HDRezka user credentials and save session cookies"""
+    global config
+    mirror = config["mirror"].rstrip("/")
+    ajax_url = f"{mirror}/ajax/login/"
+    session = get_session()
+
+    data = {
+        "login_name": payload.email,
+        "login_password": payload.password,
+        "login_not_save": "0"
+    }
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": mirror + "/"
+    }
+
+    try:
+        resp = session.post(ajax_url, data=data, headers=headers, timeout=12)
+        cookies_list = []
+        for k, v in session.cookies.items():
+            cookies_list.append(f"{k}={v}")
+        cookie_str = "; ".join(cookies_list)
+
+        is_json = "application/json" in resp.headers.get("Content-Type", "")
+        res_data = resp.json() if is_json else {"text": resp.text[:200]}
+
+        if "dle_user_id" in cookie_str or (is_json and res_data.get("success")):
+            config["cookies"] = cookie_str
+            save_config(config)
+            return {"success": True, "message": "Авторизация успешна", "cookies": cookie_str}
+        else:
+            return {"success": False, "message": "Неверный логин или пароль", "detail": res_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/config")
 def update_config(payload: ConfigModel):
@@ -452,7 +495,7 @@ def get_details(url: str = Query(...)):
 def get_episodes(id: str = Query(...), translator_id: str = Query(...)):
     """Fetch seasons and episodes for a TV series under a specific voiceover"""
     mirror = config["mirror"].rstrip("/")
-    ajax_url = f"{mirror}/ajax/get_cdn_series/?t={int(urllib.parse.time.time() * 1000)}"
+    ajax_url = f"{mirror}/ajax/get_cdn_series/?t={int(time.time() * 1000)}"
     
     session = get_session()
     data = {
@@ -528,7 +571,7 @@ def get_stream(
 ):
     """Fetch and decode direct video stream URLs (.m3u8, .mp4) for a movie or episode"""
     mirror = config["mirror"].rstrip("/")
-    ajax_url = f"{mirror}/ajax/get_cdn_series/?t={int(urllib.parse.time.time() * 1000)}"
+    ajax_url = f"{mirror}/ajax/get_cdn_series/?t={int(time.time() * 1000)}"
 
     session = get_session()
     data = {
